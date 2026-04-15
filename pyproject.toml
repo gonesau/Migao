@@ -1,0 +1,17 @@
+[project]
+name = "armonia-adaptativa"
+version = "0.1.0"
+description = "Videojuego de ritmo 2D con ajuste dinamico de dificultad e inferencia emocional implicita"
+requires-python = ">=3.11"
+dependencies = [
+    "pygame-ce",
+    "numpy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
