@@ -63,6 +63,15 @@ class DDAController:
         self._current_tempo: float = TEMPO_FLOW
         self._current_density: float = DENSITY_FLOW
 
+    def reset(self) -> None:
+        """Restore controller to its initial FLOW state for a new session."""
+        self.current_state = EmotionState.FLOW
+        self._pending_state = EmotionState.FLOW
+        self._confirmation_count = 0
+        self._time_in_state = 0.0
+        self._current_tempo = TEMPO_FLOW
+        self._current_density = DENSITY_FLOW
+
     def evaluate(self, snapshot: EmotionSnapshot, dt_since_last: float) -> DDADecision:
         self._time_in_state += dt_since_last
 
@@ -86,6 +95,8 @@ class DDAController:
                 self._confirmation_count = 0
                 was_transition = True
         else:
+            # Clear any pending attempt; _time_in_state keeps accumulating
+            # because it measures time since the last actual transition.
             self._pending_state = self.current_state
             self._confirmation_count = 0
 

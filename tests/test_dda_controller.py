@@ -113,6 +113,23 @@ class TestHysteresis:
         assert dda.current_state == EmotionState.FLOW
         assert dda._confirmation_count == 0
 
+    def test_exits_frustration_when_metrics_recover(self, dda: DDAController) -> None:
+        # Drive the controller into FRUSTRATION.
+        frustration_snap = _make_snapshot(accw=0.30, frustration_risk=0.9)
+        dda.evaluate(frustration_snap, dt_since_last=7.0)
+        dda.evaluate(frustration_snap, dt_since_last=5.0)
+        assert dda.current_state == EmotionState.FRUSTRATION
+
+        # Player recovers: mostly FLOW with an isolated FRUSTRATION blip in
+        # between. An aborted pending attempt must NOT prevent progress.
+        flow_snap = _make_snapshot(accw=0.75, jitter=0.03, frustration_risk=0.1)
+        dda.evaluate(flow_snap, dt_since_last=5.0)
+        dda.evaluate(frustration_snap, dt_since_last=5.0)
+        dda.evaluate(flow_snap, dt_since_last=5.0)
+        dda.evaluate(flow_snap, dt_since_last=5.0)
+
+        assert dda.current_state == EmotionState.FLOW
+
 
 class TestStepToward:
     def test_small_step(self) -> None:

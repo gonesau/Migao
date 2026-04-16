@@ -28,11 +28,16 @@ _SYNCOPATED: list[list[int]] = [
 class NoteSpawner:
     def __init__(self, engine: GameEngine, seed: int | None = None) -> None:
         self.engine = engine
+        self._seed = seed if seed is not None else SPAWNER_SEED
         self._beat_index = 0
         self._next_t_ideal = SPAWNER_LEAD_TIME_SEC
+        self._rng = random.Random(self._seed)
 
-        effective_seed = seed if seed is not None else SPAWNER_SEED
-        self._rng = random.Random(effective_seed)
+    def reset(self) -> None:
+        """Restart rhythmic sequence for a fresh session."""
+        self._beat_index = 0
+        self._next_t_ideal = SPAWNER_LEAD_TIME_SEC
+        self._rng = random.Random(self._seed)
 
     def update(
         self,

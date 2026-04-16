@@ -7,6 +7,7 @@ from collections import deque
 import numpy as np
 
 from domain.models import EmotionSnapshot, TelemetrySample
+from settings import MISS_GRACE_SEC
 
 _MIN_SAMPLES_FOR_JITTER = 2
 
@@ -21,6 +22,11 @@ class EmotionEngine:
     def miss_streak(self) -> int:
         return self._miss_streak
 
+    def clear(self) -> None:
+        """Drop all samples and reset miss streak for a new session."""
+        self._samples.clear()
+        self._miss_streak = 0
+
     def record_hit(self, t_ideal: float, t_real: float) -> None:
         error = abs(t_real - t_ideal)
         self._samples.append(
@@ -32,8 +38,12 @@ class EmotionEngine:
         self._miss_streak = 0
 
     def record_miss(self, t_ideal: float, t_real: float | None = None) -> None:
+        # A miss must represent an error outside the timing tolerance so that
+        # Acc_w reflects the real accuracy. Using MISS_GRACE_SEC (the actual
+        # engine cutoff) as a lower bound on the stored error achieves that.
         real_time = t_real if t_real is not None else t_ideal
-        error = abs(real_time - t_ideal)
+        raw_error = abs(real_time - t_ideal)
+        error = max(raw_error, MISS_GRACE_SEC)
         self._samples.append(
             TelemetrySample(
                 t_ideal=t_ideal, t_real=real_time,
@@ -55,6 +65,8 @@ class EmotionEngine:
     # -- pure computations ----------------------------------------------------
 
     def _compute_accw(self, errors: np.ndarray, wtol_ms: float) -> float:
+        # absolute_error is stored in seconds; wtol_ms is milliseconds.
+        # We convert to milliseconds before dividing to keep units consistent.
         if errors.size == 0:
             return 0.0
         errors_ms = errors * 1000.0

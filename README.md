@@ -30,25 +30,23 @@ uv run python src/main.py
 
 ## Controles
 
-| Tecla | Carril |
-|-------|--------|
-| D     | 1      |
-| F     | 2      |
-| J     | 3      |
-| K     | 4      |
-| ESC   | Salir  |
+| Tecla         | Accion                                         |
+|---------------|------------------------------------------------|
+| D / F / J / K | Pulsar carriles 1 a 4                          |
+| Enter / Espacio | Jugar (en menu) / reintentar (en resumen)    |
+| ESC           | Volver a menu / salir                          |
 
 ## Estructura del proyecto
 
 ```
 src/
-  main.py                  # Punto de entrada y loop principal
+  main.py                  # Punto de entrada: orquesta el flujo Menu/Juego/Resumen
   settings.py              # Constantes y umbrales centralizados
   domain/
     models.py              # Modelos de dominio puros (sin dependencia de framework)
     ports.py               # Puertos hexagonales (Protocol)
   engine/
-    game_engine.py         # Motor 2D: render, input, hit/miss, HUD, resumen
+    game_engine.py         # Motor 2D: render, input, hit/miss, HUD, particulas, shake
     note_spawner.py        # Generador de patrones ritmicos por densidad
     components.py          # Note y Lane
   telemetry/
@@ -56,11 +54,37 @@ src/
   dda/
     dda_controller.py      # Clasificacion emocional + histeresis + adaptacion
   audio/
-    audio_manager.py       # SFX sintetizados (sin archivos de audio)
+    audio_manager.py       # SFX y bucle procedural generado con numpy
+  ui/
+    screens.py             # MenuScreen, PlayingScreen, SummaryScreen
+    widgets.py             # Botones, gradientes y helpers visuales
 tests/
   test_emotion_engine.py   # Tests unitarios de telemetria
   test_dda_controller.py   # Tests unitarios de clasificacion y histeresis DDA
 ```
+
+## Integracion EmotionEngine + DDA
+
+La telemetria y el controlador adaptativo son piezas independientes que se cablean
+en el loop de juego. `DDAController` recibe solo los puertos hexagonales (motor de
+juego y audio); el `EmotionEngine` vive en el loop principal y alimenta al DDA a
+traves de instantaneas:
+
+```python
+emotion_engine = EmotionEngine(window_size=WINDOW_SIZE)
+dda = DDAController(engine=game_engine, audio=audio_manager)
+
+# En cada evento de juego:
+emotion_engine.record_hit(t_ideal=..., t_real=...)   # o record_miss(...)
+
+# Cada DDA_EVAL_INTERVAL_SEC:
+snapshot = emotion_engine.snapshot(wtol_ms=WTOL_MS, beta=BETA, gamma=GAMMA)
+dda.evaluate(snapshot, dt_since_last=...)
+```
+
+Entre partidas, la sesion se reinicia llamando a `GameEngine.reset_session()`,
+`NoteSpawner.reset()` y creando un `EmotionEngine` y `DDAController` nuevos (o
+usando sus metodos `clear()` / `reset()` respectivamente).
 
 ## Calibracion de umbrales
 

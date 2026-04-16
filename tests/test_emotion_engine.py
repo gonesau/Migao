@@ -67,6 +67,25 @@ class TestAccw:
         snap = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
         assert snap.accw == 0.0
 
+    def test_units_contract_seconds_vs_ms(self, engine: EmotionEngine) -> None:
+        # Regression: absolute_error is in seconds, wtol_ms in ms.
+        # A constant error of 0.05 s with wtol_ms=100 must yield 1 - 50/100 = 0.5.
+        for i in range(4):
+            engine.record_hit(t_ideal=float(i), t_real=float(i) + 0.05)
+        snap = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
+        assert snap.accw == pytest.approx(0.5, abs=1e-9)
+
+    def test_misses_penalize_accw(self, engine: EmotionEngine) -> None:
+        # Misses must push Acc_w down, not behave like perfect hits.
+        for i in range(5):
+            engine.record_hit(t_ideal=float(i), t_real=float(i))
+        for j in range(5, 10):
+            engine.record_miss(t_ideal=float(j))
+        snap = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
+        # 5 perfect hits contribute 1.0 each; 5 misses contribute 0.0 each
+        # (error >= WTOL), so accw should be about 0.5.
+        assert snap.accw == pytest.approx(0.5, abs=1e-9)
+
 
 class TestJitter:
     def test_zero_jitter_on_identical_errors(self, engine: EmotionEngine) -> None:

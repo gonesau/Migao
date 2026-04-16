@@ -21,6 +21,7 @@ FRUSTRATION_PF_THRESHOLD = 0.70
 BOREDOM_ACCW_THRESHOLD = 0.90
 BOREDOM_JITTER_EPSILON = 0.01
 DDA_EVAL_INTERVAL_SEC = 5.0
+HUD_SNAPSHOT_INTERVAL_SEC = 0.25  # cache refresh for HUD telemetry display
 
 # -- DDA hysteresis -----------------------------------------------------------
 HYSTERESIS_COOLDOWN_SEC = 6.0   # min seconds in a state before allowing transition

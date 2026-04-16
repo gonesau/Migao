@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import random
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +38,18 @@ class _Feedback:
     color: tuple[int, int, int]
     lane_id: int
     expires_at: float
+
+
+@dataclass
+class _Particle:
+    x: float
+    y: float
+    vx: float
+    vy: float
+    color: tuple[int, int, int]
+    life: float
+    max_life: float
+    radius: float
 
 
 @dataclass
@@ -74,6 +88,8 @@ class GameEngine:
 
         self._events: list[GameplayEvent] = []
         self._feedback: list[_Feedback] = []
+        self._particles: list[_Particle] = []
+        self._shake_amp: float = 0.0
         self.stats = SessionStats()
 
         self._font_hud: pygame.font.Font | None = None
@@ -86,6 +102,32 @@ class GameEngine:
         self._font_hud = pygame.font.SysFont("monospace", FONT_HUD)
         self._font_key = pygame.font.SysFont("monospace", FONT_KEY, bold=True)
         self._font_feed = pygame.font.SysFont("monospace", FONT_FEED, bold=True)
+
+    # -- session lifecycle ----------------------------------------------------
+
+    def reset_session(self) -> None:
+        """Clear lanes, feedback, events and stats for a new play session."""
+        for lane in self.lanes:
+            lane.notes = []
+        self.tempo_multiplier = 1.0
+        self.note_density = 1.0
+        self.theme_color = COLOR_FLOW
+        self.song_time = 0.0
+        self._events = []
+        self._feedback = []
+        self._particles = []
+        self._shake_amp = 0.0
+        self.stats = SessionStats()
+
+    @property
+    def shake_offset(self) -> tuple[int, int]:
+        if self._shake_amp <= 0.1:
+            return (0, 0)
+        amp = self._shake_amp
+        return (
+            int(random.uniform(-amp, amp)),
+            int(random.uniform(-amp, amp)),
+        )
 
     # -- port interface (GameAdapterPort) -------------------------------------
 
@@ -119,12 +161,20 @@ class GameEngine:
                 if evt.key == LANE_KEYS[i]:
                     self._handle_lane_press(lane, song_time)
 
-    def update(self, dt: float) -> None:  # noqa: ARG002
+    def update(self, dt: float) -> None:
         for lane in self.lanes:
             lane.clear_resolved()
         self._feedback = [
             fb for fb in self._feedback if fb.expires_at > self.song_time
         ]
+        for p in self._particles:
+            p.x += p.vx * dt
+            p.y += p.vy * dt
+            p.vy += 180.0 * dt
+            p.life -= dt
+        self._particles = [p for p in self._particles if p.life > 0.0]
+        if self._shake_amp > 0.0:
+            self._shake_amp = max(0.0, self._shake_amp - dt * 28.0)
 
     # -- event bus ------------------------------------------------------------
 
@@ -185,6 +235,8 @@ class GameEngine:
 
         pygame.draw.line(surface, (35, 35, 55), (w - 1, 0), (w - 1, h), 1)
 
+        self._draw_particles(surface)
+
     # -- HUD overlay ----------------------------------------------------------
 
     def render_hud(
@@ -203,13 +255,13 @@ class GameEngine:
         panel.fill((8, 8, 18, 210))
         surface.blit(panel, (0, 0))
 
-        pygame.draw.line(
-            surface,
-            _blend(self.theme_color, (0, 0, 0), 0.3),
-            (0, panel_h),
-            (w, panel_h),
-            1,
+        pulse = 0.5 + 0.5 * math.sin(self.song_time * 2.4)
+        border_col = _blend(
+            _blend(self.theme_color, (0, 0, 0), 0.45),
+            self.theme_color,
+            pulse,
         )
+        pygame.draw.line(surface, border_col, (0, panel_h), (w, panel_h), 2)
 
         state_name = state.value.upper()
         state_color = {
@@ -285,6 +337,7 @@ class GameEngine:
         best.is_hit = True
         self._emit_hit(t_ideal=best.t_ideal, t_real=song_time)
         self.stats.total_hits += 1
+        self._spawn_hit_particles(lane.lane_id, best_err)
 
         if best_err <= tol * 0.25:
             self._add_feedback("PERFECT!", (255, 240, 80), lane.lane_id)
@@ -309,6 +362,7 @@ class GameEngine:
             GameplayEvent(kind="miss", t_ideal=t_ideal, t_real=None),
         )
         self.stats.total_misses += 1
+        self._shake_amp = min(12.0, self._shake_amp + 6.5)
 
     def _add_feedback(
         self,
@@ -325,6 +379,43 @@ class GameEngine:
                 expires_at=self.song_time + 0.55,
             ),
         )
+
+    def _spawn_hit_particles(self, lane_id: int, timing_err: float) -> None:
+        w = SCREEN_WIDTH
+        lane_w = w // LANE_COUNT
+        cx = lane_id * lane_w + lane_w // 2
+        cy = int(SCREEN_HEIGHT * HIT_Y_RATIO)
+        base_color = _blend(self.theme_color, (255, 255, 255), 0.4)
+        count = 14 if timing_err < (WTOL_MS / 1000.0) * 0.5 else 8
+        for _ in range(count):
+            angle = random.uniform(0.0, math.tau)
+            speed = random.uniform(90.0, 240.0)
+            vx = speed * math.cos(angle)
+            vy = speed * math.sin(angle) - 60.0
+            life = random.uniform(0.35, 0.65)
+            self._particles.append(
+                _Particle(
+                    x=float(cx), y=float(cy), vx=vx, vy=vy,
+                    color=base_color, life=life, max_life=life,
+                    radius=random.uniform(2.2, 3.8),
+                )
+            )
+
+    def _draw_particles(self, surface: pygame.Surface) -> None:
+        def _ch(v: float) -> int:
+            return min(255, int(v))
+
+        for p in self._particles:
+            if p.max_life <= 0.0:
+                continue
+            alpha = max(0.0, min(1.0, p.life / p.max_life))
+            r = max(1, int(p.radius * (0.6 + 0.4 * alpha)))
+            col = (
+                _ch(p.color[0] * alpha + 10),
+                _ch(p.color[1] * alpha + 10),
+                _ch(p.color[2] * alpha + 10),
+            )
+            pygame.draw.circle(surface, col, (int(p.x), int(p.y)), r)
 
     def _draw_note(
         self,
