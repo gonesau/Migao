@@ -26,6 +26,7 @@ class EmotionSnapshot:
     jitter: float
     frustration_risk: float
     miss_streak: int
+    hit_streak: int
     sample_count: int
 
 

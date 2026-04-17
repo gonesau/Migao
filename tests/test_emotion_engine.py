@@ -79,12 +79,28 @@ class TestAccw:
         # Misses must push Acc_w down, not behave like perfect hits.
         for i in range(5):
             engine.record_hit(t_ideal=float(i), t_real=float(i))
+        peak_accw = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0).accw
         for j in range(5, 10):
             engine.record_miss(t_ideal=float(j))
-        snap = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
-        # 5 perfect hits contribute 1.0 each; 5 misses contribute 0.0 each
-        # (error >= WTOL), so accw should be about 0.5.
-        assert snap.accw == pytest.approx(0.5, abs=1e-9)
+        after_accw = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0).accw
+        # EWMA weights recent samples more, so after 5 consecutive misses the
+        # five earlier perfect hits must not prop Acc_w up near 0.5. The
+        # metric must clearly drop below the frustration threshold so the
+        # DDA can react.
+        assert peak_accw == pytest.approx(1.0, abs=1e-9)
+        assert after_accw < 0.4
+        assert after_accw < peak_accw
+
+    def test_ewma_reacts_faster_than_flat_average(self, engine: EmotionEngine) -> None:
+        # After a long miss streak, a few hits must visibly lift Acc_w.
+        for j in range(10):
+            engine.record_miss(t_ideal=float(j))
+        low_accw = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0).accw
+        for i in range(3):
+            engine.record_hit(t_ideal=float(100 + i), t_real=float(100 + i))
+        recovered_accw = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0).accw
+        assert low_accw < 0.05
+        assert recovered_accw - low_accw > 0.4
 
 
 class TestJitter:
@@ -140,3 +156,48 @@ class TestSnapshot:
             small_engine.record_hit(t_ideal=float(i), t_real=float(i))
         snap = small_engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
         assert snap.sample_count == 3
+
+
+class TestHitStreak:
+    def test_hit_streak_starts_at_zero(self, engine: EmotionEngine) -> None:
+        assert engine.hit_streak == 0
+        snap = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
+        assert snap.hit_streak == 0
+
+    def test_hit_streak_increments_on_consecutive_hits(
+        self, engine: EmotionEngine,
+    ) -> None:
+        for i in range(4):
+            engine.record_hit(t_ideal=float(i), t_real=float(i))
+        snap = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
+        assert snap.hit_streak == 4
+        assert snap.miss_streak == 0
+
+    def test_hit_streak_resets_on_miss(self, engine: EmotionEngine) -> None:
+        for i in range(5):
+            engine.record_hit(t_ideal=float(i), t_real=float(i))
+        engine.record_miss(t_ideal=6.0)
+        snap = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
+        assert snap.hit_streak == 0
+        assert snap.miss_streak == 1
+
+    def test_streaks_are_mutually_exclusive(self, engine: EmotionEngine) -> None:
+        engine.record_miss(t_ideal=1.0)
+        engine.record_miss(t_ideal=2.0)
+        engine.record_hit(t_ideal=3.0, t_real=3.0)
+        snap = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
+        assert snap.miss_streak == 0
+        assert snap.hit_streak == 1
+
+
+class TestClear:
+    def test_clear_resets_all_state(self, engine: EmotionEngine) -> None:
+        for i in range(3):
+            engine.record_hit(t_ideal=float(i), t_real=float(i))
+        engine.record_miss(t_ideal=10.0)
+        engine.clear()
+        snap = engine.snapshot(wtol_ms=100.0, beta=1.4, gamma=4.0)
+        assert snap.sample_count == 0
+        assert snap.accw == 0.0
+        assert snap.miss_streak == 0
+        assert snap.hit_streak == 0

@@ -1,4 +1,19 @@
-"""DDA controller — classifies emotional state and applies adaptations via ports."""
+"""DDA controller — classifies emotional state and applies adaptations via ports.
+
+Hysteresis is implemented at two levels:
+
+* Classifier-level band: entering FRUSTRATION is easier than exiting. Once in
+  FRUSTRATION the classifier demands a cleaner recovery (higher Acc_w, lower
+  P(F)) before it stops returning FRUSTRATION as the raw state. This prevents
+  the player from flickering back as soon as Acc_w dips a hair below the
+  entry threshold.
+* Transition score: instead of requiring a strict streak of identical raw
+  classifications, evidence is accumulated as a float. An opposite reading
+  decays the score by `TRANSITION_SCORE_DECAY` instead of wiping it, so a
+  single bad sample during recovery does not cancel all progress. On top of
+  that, a sustained hit streak provides a fast-recovery override to leave
+  FRUSTRATION without waiting for the full score to build up.
+"""
 
 from __future__ import annotations
 
@@ -13,14 +28,18 @@ from settings import (
     DENSITY_BOREDOM,
     DENSITY_FLOW,
     DENSITY_FRUSTRATION,
-    FRUSTRATION_ACCW_THRESHOLD,
-    FRUSTRATION_PF_THRESHOLD,
-    HYSTERESIS_CONFIRMATIONS,
+    FAST_RECOVERY_HIT_STREAK,
+    FRUSTRATION_ENTER_ACCW,
+    FRUSTRATION_ENTER_PF,
+    FRUSTRATION_EXIT_ACCW,
+    FRUSTRATION_EXIT_PF,
     HYSTERESIS_COOLDOWN_SEC,
     TEMPO_BOREDOM,
     TEMPO_FLOW,
     TEMPO_FRUSTRATION,
     TEMPO_STEP_LIMIT,
+    TRANSITION_SCORE_DECAY,
+    TRANSITION_SCORE_THRESHOLD,
 )
 
 _STATE_PARAMS: dict[EmotionState, dict] = {
@@ -55,9 +74,8 @@ class DDAController:
         self._audio = audio
 
         self.current_state: EmotionState = EmotionState.FLOW
-
         self._pending_state: EmotionState = EmotionState.FLOW
-        self._confirmation_count: int = 0
+        self._transition_score: float = 0.0
         self._time_in_state: float = 0.0
 
         self._current_tempo: float = TEMPO_FLOW
@@ -67,55 +85,102 @@ class DDAController:
         """Restore controller to its initial FLOW state for a new session."""
         self.current_state = EmotionState.FLOW
         self._pending_state = EmotionState.FLOW
-        self._confirmation_count = 0
+        self._transition_score = 0.0
         self._time_in_state = 0.0
         self._current_tempo = TEMPO_FLOW
         self._current_density = DENSITY_FLOW
 
     def evaluate(self, snapshot: EmotionSnapshot, dt_since_last: float) -> DDADecision:
         self._time_in_state += dt_since_last
+        previous = self.current_state
+
+        if self._should_fast_recover(snapshot):
+            return self._commit_transition(EmotionState.FLOW, previous, snapshot)
 
         raw_state = self._classify(snapshot)
-        previous = self.current_state
-        was_transition = False
+        self._update_transition_score(raw_state)
 
-        if raw_state != self.current_state:
-            if raw_state == self._pending_state:
-                self._confirmation_count += 1
-            else:
-                self._pending_state = raw_state
-                self._confirmation_count = 1
-
-            cooldown_met = self._time_in_state >= HYSTERESIS_COOLDOWN_SEC
-            confirmations_met = self._confirmation_count >= HYSTERESIS_CONFIRMATIONS
-
-            if cooldown_met and confirmations_met:
-                self.current_state = raw_state
-                self._time_in_state = 0.0
-                self._confirmation_count = 0
-                was_transition = True
-        else:
-            # Clear any pending attempt; _time_in_state keeps accumulating
-            # because it measures time since the last actual transition.
-            self._pending_state = self.current_state
-            self._confirmation_count = 0
+        if self._can_commit_transition():
+            return self._commit_transition(self._pending_state, previous, snapshot)
 
         self._apply(self.current_state)
-
         return DDADecision(
             previous_state=previous,
             new_state=self.current_state,
             snapshot=snapshot,
-            was_transition=was_transition,
+            was_transition=False,
         )
 
-    def _classify(self, snapshot: EmotionSnapshot) -> EmotionState:
-        is_frustrated = (
-            snapshot.accw < FRUSTRATION_ACCW_THRESHOLD
-            or snapshot.frustration_risk > FRUSTRATION_PF_THRESHOLD
+    # -- hysteresis state machine --------------------------------------------
+
+    def _update_transition_score(self, raw_state: EmotionState) -> None:
+        if raw_state != self._pending_state:
+            # Direction of evidence changed — start a fresh accumulation so
+            # a brief excursion into a third state does not linger forever.
+            self._pending_state = raw_state
+            self._transition_score = 0.0
+
+        if raw_state != self.current_state:
+            self._transition_score += 1.0
+        else:
+            self._transition_score = max(
+                0.0, self._transition_score - TRANSITION_SCORE_DECAY,
+            )
+
+    def _can_commit_transition(self) -> bool:
+        if self._pending_state == self.current_state:
+            return False
+        if self._time_in_state < HYSTERESIS_COOLDOWN_SEC:
+            return False
+        return self._transition_score >= TRANSITION_SCORE_THRESHOLD
+
+    def _commit_transition(
+        self,
+        target: EmotionState,
+        previous: EmotionState,
+        snapshot: EmotionSnapshot,
+    ) -> DDADecision:
+        self.current_state = target
+        self._pending_state = target
+        self._transition_score = 0.0
+        self._time_in_state = 0.0
+        self._apply(target)
+        return DDADecision(
+            previous_state=previous,
+            new_state=target,
+            snapshot=snapshot,
+            was_transition=True,
         )
-        if is_frustrated:
-            return EmotionState.FRUSTRATION
+
+    def _should_fast_recover(self, snapshot: EmotionSnapshot) -> bool:
+        # A sustained hit streak with no recent misses is the clearest signal
+        # that the player has recovered. Respect the minimum cooldown so the
+        # adaptation parameters still get a chance to settle audibly.
+        return (
+            self.current_state == EmotionState.FRUSTRATION
+            and self._time_in_state >= HYSTERESIS_COOLDOWN_SEC
+            and snapshot.miss_streak == 0
+            and snapshot.hit_streak >= FAST_RECOVERY_HIT_STREAK
+        )
+
+    # -- classification -------------------------------------------------------
+
+    def _classify(self, snapshot: EmotionSnapshot) -> EmotionState:
+        if self.current_state == EmotionState.FRUSTRATION:
+            # To leave frustration, BOTH metrics must clear the exit band.
+            still_frustrated = (
+                snapshot.accw < FRUSTRATION_EXIT_ACCW
+                or snapshot.frustration_risk > FRUSTRATION_EXIT_PF
+            )
+            if still_frustrated:
+                return EmotionState.FRUSTRATION
+        else:
+            is_frustrated = (
+                snapshot.accw < FRUSTRATION_ENTER_ACCW
+                or snapshot.frustration_risk > FRUSTRATION_ENTER_PF
+            )
+            if is_frustrated:
+                return EmotionState.FRUSTRATION
 
         is_bored = (
             snapshot.accw > BOREDOM_ACCW_THRESHOLD
@@ -125,6 +190,8 @@ class DDAController:
             return EmotionState.BOREDOM
 
         return EmotionState.FLOW
+
+    # -- adaptation application ----------------------------------------------
 
     def _apply(self, state: EmotionState) -> None:
         params = _STATE_PARAMS[state]

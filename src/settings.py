@@ -15,17 +15,31 @@ WTOL_MS = 100.0  # timing-tolerance window in milliseconds
 BETA = 1.4
 GAMMA = 4.0
 
+# -- emotion engine telemetry -------------------------------------------------
+ACCW_EWMA_ALPHA = 0.25           # weight of each new sample on Acc_w EWMA
+
 # -- DDA classification thresholds -------------------------------------------
-FRUSTRATION_ACCW_THRESHOLD = 0.50
-FRUSTRATION_PF_THRESHOLD = 0.70
+# Hysteresis band at the classifier level: entering FRUSTRATION is easier than
+# exiting, so a player that is just over the edge does not flicker back.
+FRUSTRATION_ENTER_ACCW = 0.50
+FRUSTRATION_EXIT_ACCW = 0.60
+FRUSTRATION_ENTER_PF = 0.70
+FRUSTRATION_EXIT_PF = 0.50
+
+# Kept for backward compatibility with existing consumers/tests.
+FRUSTRATION_ACCW_THRESHOLD = FRUSTRATION_ENTER_ACCW
+FRUSTRATION_PF_THRESHOLD = FRUSTRATION_ENTER_PF
+
 BOREDOM_ACCW_THRESHOLD = 0.90
 BOREDOM_JITTER_EPSILON = 0.01
 DDA_EVAL_INTERVAL_SEC = 5.0
 HUD_SNAPSHOT_INTERVAL_SEC = 0.25  # cache refresh for HUD telemetry display
 
 # -- DDA hysteresis -----------------------------------------------------------
-HYSTERESIS_COOLDOWN_SEC = 6.0   # min seconds in a state before allowing transition
-HYSTERESIS_CONFIRMATIONS = 2    # consecutive evaluations confirming the new state
+HYSTERESIS_COOLDOWN_SEC = 6.0        # min seconds in a state before allowing transition
+TRANSITION_SCORE_THRESHOLD = 2.0     # accumulated evidence needed to transition
+TRANSITION_SCORE_DECAY = 0.5         # points subtracted when raw matches current
+FAST_RECOVERY_HIT_STREAK = 8         # hits in a row that force exit from FRUSTRATION
 
 # -- tempo ranges -------------------------------------------------------------
 BASE_BPM = 120
