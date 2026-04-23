@@ -74,6 +74,31 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def _regular_polygon_points(
+    center: tuple[int, int], radius: int, sides: int,
+) -> list[tuple[int, int]]:
+    cx, cy = center
+    return [
+        (
+            int(cx + math.cos((math.tau / sides) * i - math.pi / 2) * radius),
+            int(cy + math.sin((math.tau / sides) * i - math.pi / 2) * radius),
+        )
+        for i in range(sides)
+    ]
+
+
+def _star_points(
+    center: tuple[int, int], outer_radius: int, inner_radius: int, points: int,
+) -> list[tuple[int, int]]:
+    cx, cy = center
+    out: list[tuple[int, int]] = []
+    for i in range(points * 2):
+        angle = (math.pi / points) * i - math.pi / 2
+        r = outer_radius if i % 2 == 0 else inner_radius
+        out.append((int(cx + math.cos(angle) * r), int(cy + math.sin(angle) * r)))
+    return out
+
+
 class GameEngine:
     """Satisfies GameAdapterPort via duck typing."""
 
@@ -95,6 +120,9 @@ class GameEngine:
         self._font_hud: pygame.font.Font | None = None
         self._font_key: pygame.font.Font | None = None
         self._font_feed: pygame.font.Font | None = None
+
+        self._hit_wtol_sec: float = WTOL_MS / 1000.0
+        self._miss_grace_sec: float = MISS_GRACE_SEC
 
     # -- one-time init (call after pygame.init()) -----------------------------
 
@@ -118,6 +146,12 @@ class GameEngine:
         self._particles = []
         self._shake_amp = 0.0
         self.stats = SessionStats()
+        self._hit_wtol_sec = WTOL_MS / 1000.0
+        self._miss_grace_sec = MISS_GRACE_SEC
+
+    def configure_session_timing(self, wtol_ms: float, miss_grace_sec: float) -> None:
+        self._hit_wtol_sec = max(1e-6, wtol_ms / 1000.0)
+        self._miss_grace_sec = max(0.0, miss_grace_sec)
 
     @property
     def shake_offset(self) -> tuple[int, int]:
@@ -148,7 +182,7 @@ class GameEngine:
             for note in lane.notes:
                 if note.is_hit or note.is_missed:
                     continue
-                if song_time > note.t_ideal + MISS_GRACE_SEC:
+                if song_time > note.t_ideal + self._miss_grace_sec:
                     note.is_missed = True
                     self._emit_miss(note.t_ideal)
                     self._add_feedback("MISS", (220, 60, 60), note.lane_id)
@@ -249,18 +283,13 @@ class GameEngine:
             return
 
         w = surface.get_width()
-        panel_h = 68
+        panel_h = 58
 
         panel = pygame.Surface((w, panel_h), pygame.SRCALPHA)
-        panel.fill((8, 8, 18, 210))
+        panel.fill((8, 10, 18, 198))
         surface.blit(panel, (0, 0))
 
-        pulse = 0.5 + 0.5 * math.sin(self.song_time * 2.4)
-        border_col = _blend(
-            _blend(self.theme_color, (0, 0, 0), 0.45),
-            self.theme_color,
-            pulse,
-        )
+        border_col = _blend(self.theme_color, (20, 24, 36), 0.45)
         pygame.draw.line(surface, border_col, (0, panel_h), (w, panel_h), 2)
 
         state_name = state.value.upper()
@@ -270,13 +299,10 @@ class GameEngine:
             "boredom": (255, 165, 45),
         }.get(state.value, (190, 190, 190))
 
-        state_surf = self._font_hud.render(f"  {state_name}", True, state_color)
-        surface.blit(state_surf, (16, 8))
+        state_surf = self._font_hud.render(f"Estado {state_name}", True, state_color)
+        surface.blit(state_surf, (14, 8))
 
-        tag_surf = self._font_hud.render("estado emocional", True, (55, 65, 75))
-        surface.blit(tag_surf, (16, 36))
-
-        bx, by, bw, bh = 220, 10, 200, 16
+        bx, by, bw, bh = 220, 12, 200, 14
         pygame.draw.rect(surface, (30, 35, 50), (bx, by, bw, bh), border_radius=4)
         fill_w = max(0, int(bw * _clamp(snapshot.accw, 0.0, 1.0)))
         if fill_w > 0:
@@ -288,10 +314,8 @@ class GameEngine:
             surface, (70, 75, 95), (bx, by, bw, bh), 1, border_radius=4,
         )
 
-        acc_lbl = self._font_hud.render(
-            f"Acc_w  {snapshot.accw:.2f}", True, (170, 175, 195),
-        )
-        surface.blit(acc_lbl, (bx, by + bh + 5))
+        acc_lbl = self._font_hud.render(f"Acc_w {snapshot.accw:.2f}", True, (170, 175, 195))
+        surface.blit(acc_lbl, (bx, by + bh + 3))
 
         jitter_ms = snapshot.jitter * 1000.0
         jit_col = (
@@ -299,22 +323,16 @@ class GameEngine:
             (255, 185, 45) if jitter_ms < 60 else
             (220, 75, 75)
         )
-        jit_surf = self._font_hud.render(
-            f"Jitter  {jitter_ms:5.1f} ms", True, jit_col,
-        )
+        jit_surf = self._font_hud.render(f"Jitter {jitter_ms:5.1f} ms", True, jit_col)
         surface.blit(jit_surf, (460, 8))
 
         risk = snapshot.frustration_risk
         risk_col = (220, 80, 80) if risk > 0.5 else (110, 200, 120)
-        risk_surf = self._font_hud.render(
-            f"P(F)  {risk:.2f}   racha: {snapshot.miss_streak}",
-            True,
-            risk_col,
-        )
-        surface.blit(risk_surf, (460, 36))
+        risk_surf = self._font_hud.render(f"P(F) {risk:.2f}  miss {snapshot.miss_streak}", True, risk_col)
+        surface.blit(risk_surf, (460, 32))
 
-        hint = self._font_hud.render("ESC - salir", True, (50, 55, 65))
-        surface.blit(hint, (w - hint.get_width() - 16, 26))
+        hint = self._font_hud.render("ESC salir", True, (95, 100, 120))
+        surface.blit(hint, (w - hint.get_width() - 16, 18))
 
     # -- private helpers ------------------------------------------------------
 
@@ -330,7 +348,7 @@ class GameEngine:
         if best is None:
             return
 
-        tol = WTOL_MS / 1000.0
+        tol = self._hit_wtol_sec
         if best_err > tol * 2.0:
             return
 
@@ -386,7 +404,7 @@ class GameEngine:
         cx = lane_id * lane_w + lane_w // 2
         cy = int(SCREEN_HEIGHT * HIT_Y_RATIO)
         base_color = _blend(self.theme_color, (255, 255, 255), 0.4)
-        count = 14 if timing_err < (WTOL_MS / 1000.0) * 0.5 else 8
+        count = 14 if timing_err < self._hit_wtol_sec * 0.5 else 8
         for _ in range(count):
             angle = random.uniform(0.0, math.tau)
             speed = random.uniform(90.0, 240.0)
@@ -460,8 +478,40 @@ class GameEngine:
             lane_w - NOTE_MARGIN * 2,
             NOTE_HEIGHT,
         )
+        if note.shape == "circle":
+            center = rect.center
+            radius = max(6, min(rect.width, rect.height) // 2)
+            pygame.draw.circle(surface, color, center, radius)
+            pygame.draw.circle(surface, border, center, radius, 2)
+            return
+
+        if note.shape == "diamond":
+            pts = [
+                (rect.centerx, rect.top),
+                (rect.right, rect.centery),
+                (rect.centerx, rect.bottom),
+                (rect.left, rect.centery),
+            ]
+            pygame.draw.polygon(surface, color, pts)
+            pygame.draw.polygon(surface, border, pts, 2)
+            return
+
+        if note.shape == "hex":
+            pts = _regular_polygon_points(rect.center, min(rect.width, rect.height) // 2, 6)
+            pygame.draw.polygon(surface, color, pts)
+            pygame.draw.polygon(surface, border, pts, 2)
+            return
+
+        if note.shape == "star":
+            outer = max(6, min(rect.width, rect.height) // 2)
+            inner = max(4, int(outer * 0.45))
+            pts = _star_points(rect.center, outer, inner, 5)
+            pygame.draw.polygon(surface, color, pts)
+            pygame.draw.polygon(surface, border, pts, 2)
+            return
+
         pygame.draw.rect(surface, color, rect, border_radius=6)
-        pygame.draw.rect(surface, border, rect, 1, border_radius=6)
+        pygame.draw.rect(surface, border, rect, 2, border_radius=6)
 
     def accumulate_state_time(self, state: EmotionState, dt: float) -> None:
         self.stats.time_in_state[state.value] += dt

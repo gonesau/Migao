@@ -8,6 +8,7 @@ class Note:
     lane_id: int
     t_ideal: float
     spawn_time: float
+    shape: str = "rect"
     is_hit: bool = False
     is_missed: bool = False
 

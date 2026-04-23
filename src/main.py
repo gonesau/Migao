@@ -7,6 +7,7 @@ import sys
 import pygame
 
 from audio.audio_manager import AudioManager
+from domain.difficulty import GameDifficulty
 from engine.game_engine import GameEngine
 from settings import SCREEN_HEIGHT, SCREEN_WIDTH
 from ui.screens import (
@@ -33,13 +34,18 @@ def run() -> None:
 
     intent = Intent.MENU
     last_stats = None
+    selected_difficulty = GameDifficulty.MEDIUM
 
     while True:
         if intent == Intent.MENU:
-            intent = MenuScreen(screen, clock, fonts).run()
+            intent, diff = MenuScreen(
+                screen, clock, fonts, initial_difficulty=selected_difficulty,
+            ).run()
+            if diff is not None:
+                selected_difficulty = diff
         elif intent == Intent.PLAY:
             intent, last_stats = PlayingScreen(
-                screen, clock, fonts, engine, audio,
+                screen, clock, fonts, engine, audio, selected_difficulty,
             ).run()
         elif intent == Intent.SUMMARY:
             stats = last_stats if last_stats is not None else engine.stats

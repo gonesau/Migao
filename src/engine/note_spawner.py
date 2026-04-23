@@ -23,6 +23,7 @@ _DENSE: list[list[int]] = [
 _SYNCOPATED: list[list[int]] = [
     [0], [1, 3], [], [2], [0, 2], [], [3], [1],
 ]
+_SHAPES: tuple[str, ...] = ("diamond", "circle", "hex", "star")
 
 
 class NoteSpawner:
@@ -76,8 +77,14 @@ class NoteSpawner:
 
         spawn_time = max(0.0, t_ideal - fall_duration)
         for lane_id in lanes:
+            shape = _pick_shape(self._beat_index, lane_id, density)
             self.engine.lanes[lane_id].add_note(
-                Note(lane_id=lane_id, t_ideal=t_ideal, spawn_time=spawn_time),
+                Note(
+                    lane_id=lane_id,
+                    t_ideal=t_ideal,
+                    spawn_time=spawn_time,
+                    shape=shape,
+                ),
             )
 
 
@@ -89,3 +96,9 @@ def _pick_pattern(density: float) -> list[list[int]]:
     if density < 1.15:
         return _DENSE
     return _SYNCOPATED
+
+
+def _pick_shape(beat_index: int, lane_id: int, density: float) -> str:
+    density_bucket = int(density * 10.0)
+    idx = (beat_index + lane_id * 2 + density_bucket) % len(_SHAPES)
+    return _SHAPES[idx]

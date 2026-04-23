@@ -90,6 +90,16 @@ class TestClassification:
         state = dda._classify(snap)
         assert state == EmotionState.FLOW
 
+    def test_profile_boredom_thresholds_are_respected(self) -> None:
+        custom = DDAController(
+            engine=_FakeGameAdapter(),
+            audio=_FakeAudioAdapter(),
+            boredom_accw_threshold=0.89,
+            boredom_jitter_epsilon=0.02,
+        )
+        snap = _make_snapshot(accw=0.87, jitter=0.019, frustration_risk=0.0)
+        assert custom._classify(snap) == EmotionState.FLOW
+
 
 class TestHysteresis:
     def test_no_immediate_transition(self, dda: DDAController) -> None:

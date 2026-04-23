@@ -59,13 +59,19 @@ class EmotionEngine:
         self._hit_streak += 1
         self._miss_streak = 0
 
-    def record_miss(self, t_ideal: float, t_real: float | None = None) -> None:
+    def record_miss(
+        self,
+        t_ideal: float,
+        t_real: float | None = None,
+        miss_grace_sec: float | None = None,
+    ) -> None:
         # A miss must represent an error outside the timing tolerance so that
-        # Acc_w reflects the real accuracy. Using MISS_GRACE_SEC (the actual
-        # engine cutoff) as a lower bound on the stored error achieves that.
+        # Acc_w reflects the real accuracy. Using the engine miss grace as a
+        # lower bound on the stored error achieves that.
+        grace = MISS_GRACE_SEC if miss_grace_sec is None else miss_grace_sec
         real_time = t_real if t_real is not None else t_ideal
         raw_error = abs(real_time - t_ideal)
-        error = max(raw_error, MISS_GRACE_SEC)
+        error = max(raw_error, grace)
         self._append_sample(t_ideal=t_ideal, t_real=real_time, is_miss=True, error=error)
         self._miss_streak += 1
         self._hit_streak = 0

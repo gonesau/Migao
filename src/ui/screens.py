@@ -11,6 +11,7 @@ import pygame
 
 from audio.audio_manager import AudioManager
 from dda.dda_controller import DDAController
+from domain.difficulty import GameDifficulty, profile_for
 from domain.models import EmotionSnapshot, EmotionState
 from engine.game_engine import GameEngine, SessionStats
 from engine.note_spawner import NoteSpawner
@@ -27,7 +28,6 @@ from settings import (
     SCREEN_HEIGHT,
     SCREEN_WIDTH,
     WINDOW_SIZE,
-    WTOL_MS,
 )
 from telemetry.emotion_engine import EmotionEngine
 from ui.widgets import (
@@ -59,38 +59,69 @@ class _Fonts:
 
 def build_fonts() -> _Fonts:
     return _Fonts(
-        title=pygame.font.SysFont("arial black,arial", 72, bold=True),
-        subtitle=pygame.font.SysFont("arial", 22),
-        button=pygame.font.SysFont("arial", 26, bold=True),
-        body=pygame.font.SysFont("consolas,monospace", 22),
-        small=pygame.font.SysFont("consolas,monospace", 16),
+        title=pygame.font.SysFont("arial black,arial", 56, bold=True),
+        subtitle=pygame.font.SysFont("arial", 19),
+        button=pygame.font.SysFont("arial", 24, bold=True),
+        body=pygame.font.SysFont("consolas,monospace", 20),
+        small=pygame.font.SysFont("consolas,monospace", 15),
     )
 
 
 # -- Menu ---------------------------------------------------------------------
 
 class MenuScreen:
-    def __init__(self, screen: pygame.Surface, clock: pygame.time.Clock, fonts: _Fonts) -> None:
+    def __init__(
+        self,
+        screen: pygame.Surface,
+        clock: pygame.time.Clock,
+        fonts: _Fonts,
+        initial_difficulty: GameDifficulty = GameDifficulty.MEDIUM,
+    ) -> None:
         self.screen = screen
         self.clock = clock
         self.fonts = fonts
         self._elapsed = 0.0
         self._fade_in = 1.0  # 1.0 -> 0.0 as we appear
+        self._selected = initial_difficulty
 
         cx = SCREEN_WIDTH // 2
+        bw, bh, gap = 150, 44, 14
+        row_w = bw * 3 + gap * 2
+        x0 = cx - row_w // 2
+        y_diff = 306
+        self._diff_specs: list[tuple[GameDifficulty, Button]] = [
+            (
+                GameDifficulty.EASY,
+                Button(label="Fácil", rect=pygame.Rect(x0, y_diff, bw, bh)),
+            ),
+            (
+                GameDifficulty.MEDIUM,
+                Button(
+                    label="Medio",
+                    rect=pygame.Rect(x0 + bw + gap, y_diff, bw, bh),
+                ),
+            ),
+            (
+                GameDifficulty.HARD,
+                Button(
+                    label="Difícil",
+                    rect=pygame.Rect(x0 + 2 * (bw + gap), y_diff, bw, bh),
+                ),
+            ),
+        ]
         self._play_btn = Button(
             label="JUGAR",
-            rect=pygame.Rect(cx - 170, 420, 340, 64),
+            rect=pygame.Rect(cx - 150, 382, 300, 58),
             primary=True,
             hot_key=pygame.K_RETURN,
         )
         self._quit_btn = Button(
             label="Salir",
-            rect=pygame.Rect(cx - 110, 504, 220, 52),
+            rect=pygame.Rect(cx - 90, 456, 180, 46),
             hot_key=pygame.K_ESCAPE,
         )
 
-    def run(self) -> Intent:
+    def run(self) -> tuple[Intent, GameDifficulty | None]:
         leaving: Intent | None = None
         fade_out = 0.0
 
@@ -102,7 +133,7 @@ class MenuScreen:
             mouse_pos = pygame.mouse.get_pos()
             for evt in pygame.event.get():
                 if evt.type == pygame.QUIT:
-                    return Intent.QUIT
+                    return Intent.QUIT, None
                 if leaving is not None:
                     continue
                 if evt.type == pygame.KEYDOWN:
@@ -110,7 +141,20 @@ class MenuScreen:
                         leaving = Intent.QUIT
                     elif evt.key in (pygame.K_RETURN, pygame.K_SPACE):
                         leaving = Intent.PLAY
+                    elif evt.key == pygame.K_1:
+                        self._selected = GameDifficulty.EASY
+                    elif evt.key == pygame.K_2:
+                        self._selected = GameDifficulty.MEDIUM
+                    elif evt.key == pygame.K_3:
+                        self._selected = GameDifficulty.HARD
+                    elif evt.key == pygame.K_LEFT:
+                        self._cycle_difficulty(-1)
+                    elif evt.key == pygame.K_RIGHT:
+                        self._cycle_difficulty(1)
                 elif evt.type == pygame.MOUSEBUTTONDOWN and evt.button == 1:
+                    for diff, btn in self._diff_specs:
+                        if btn.contains(evt.pos):
+                            self._selected = diff
                     if self._play_btn.contains(evt.pos):
                         leaving = Intent.PLAY
                     elif self._quit_btn.contains(evt.pos):
@@ -123,11 +167,22 @@ class MenuScreen:
                 draw_fade_overlay(self.screen, int(255 * fade_out))
                 pygame.display.flip()
                 if fade_out >= 1.0:
-                    return leaving
+                    if leaving is Intent.QUIT:
+                        return Intent.QUIT, None
+                    return Intent.PLAY, self._selected
                 continue
 
             draw_fade_overlay(self.screen, int(255 * self._fade_in))
             pygame.display.flip()
+
+    def _cycle_difficulty(self, delta: int) -> None:
+        order = (
+            GameDifficulty.EASY,
+            GameDifficulty.MEDIUM,
+            GameDifficulty.HARD,
+        )
+        idx = order.index(self._selected)
+        self._selected = order[(idx + delta) % len(order)]
 
     def _draw(self, mouse_pos: tuple[int, int]) -> None:
         draw_animated_backdrop(
@@ -139,16 +194,33 @@ class MenuScreen:
 
         title = self.fonts.title.render("MIGAO", True, (240, 245, 255))
         subtitle = self.fonts.subtitle.render(
-            "Ritmo 2D con adaptacion dinamica e inferencia emocional",
+            "Ritmo adaptativo",
             True, (180, 190, 210),
         )
 
-        title_y = 170 + int(math.sin(self._elapsed * 1.5) * 4)
+        title_y = 126 + int(math.sin(self._elapsed * 1.5) * 4)
         self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, title_y))
         self.screen.blit(
             subtitle,
-            (SCREEN_WIDTH // 2 - subtitle.get_width() // 2, title_y + 110),
+            (SCREEN_WIDTH // 2 - subtitle.get_width() // 2, title_y + 82),
         )
+
+        niv = self.fonts.small.render("Dificultad", True, (150, 160, 180))
+        self.screen.blit(niv, (SCREEN_WIDTH // 2 - niv.get_width() // 2, 278))
+
+        for diff, btn in self._diff_specs:
+            draw_button(
+                self.screen,
+                Button(
+                    label=btn.label,
+                    rect=btn.rect,
+                    primary=diff is self._selected,
+                ),
+                self.fonts.button,
+                accent=COLOR_FLOW,
+                hover=btn.contains(mouse_pos),
+                time_sec=self._elapsed,
+            )
 
         # Buttons
         draw_button(
@@ -165,12 +237,12 @@ class MenuScreen:
         )
 
         hint = self.fonts.small.render(
-            "D  F  J  K  para pulsar los carriles    ENTER para jugar    ESC para salir",
+            "1-3 o flechas para cambiar dificultad",
             True, (120, 130, 150),
         )
         self.screen.blit(
             hint,
-            (SCREEN_WIDTH // 2 - hint.get_width() // 2, SCREEN_HEIGHT - 48),
+            (SCREEN_WIDTH // 2 - hint.get_width() // 2, SCREEN_HEIGHT - 52),
         )
 
 
@@ -191,19 +263,34 @@ class PlayingScreen:
         fonts: _Fonts,
         engine: GameEngine,
         audio: AudioManager,
+        difficulty: GameDifficulty,
     ) -> None:
         self.screen = screen
         self.clock = clock
         self.fonts = fonts
         self.engine = engine
         self.audio = audio
+        self.difficulty = difficulty
 
         self._scene = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
 
     def run(self) -> tuple[Intent, SessionStats]:
         self.engine.reset_session()
+        profile = profile_for(self.difficulty)
+        self.engine.configure_session_timing(
+            profile.wtol_ms,
+            profile.miss_grace_sec,
+        )
         emotion_engine = EmotionEngine(window_size=WINDOW_SIZE)
-        dda = DDAController(engine=self.engine, audio=self.audio)
+        dda = DDAController(
+            engine=self.engine,
+            audio=self.audio,
+            tempo_offset=profile.tempo_offset,
+            density_offset=profile.density_offset,
+            boredom_accw_threshold=profile.boredom_accw_threshold,
+            boredom_jitter_epsilon=profile.boredom_jitter_epsilon,
+        )
+        dda.reset()
         spawner = NoteSpawner(engine=self.engine)
 
         self.audio.load_tracks()
@@ -213,7 +300,7 @@ class PlayingScreen:
         time_since_dda_eval = 0.0
         last_snap_time = -1.0
         cached_snap = emotion_engine.snapshot(
-            wtol_ms=WTOL_MS, beta=BETA, gamma=GAMMA,
+            wtol_ms=profile.wtol_ms, beta=BETA, gamma=GAMMA,
         )
 
         fade_in = 1.0
@@ -249,7 +336,10 @@ class PlayingScreen:
                         )
                         self.audio.play_hit()
                     elif game_evt.kind == "miss":
-                        emotion_engine.record_miss(t_ideal=game_evt.t_ideal)
+                        emotion_engine.record_miss(
+                            t_ideal=game_evt.t_ideal,
+                            miss_grace_sec=profile.miss_grace_sec,
+                        )
                         self.audio.play_miss()
 
                 time_since_dda_eval += dt
@@ -257,14 +347,14 @@ class PlayingScreen:
 
                 if time_since_dda_eval >= DDA_EVAL_INTERVAL_SEC:
                     snap = emotion_engine.snapshot(
-                        wtol_ms=WTOL_MS, beta=BETA, gamma=GAMMA,
+                        wtol_ms=profile.wtol_ms, beta=BETA, gamma=GAMMA,
                     )
                     dda.evaluate(snap, dt_since_last=time_since_dda_eval)
                     time_since_dda_eval = 0.0
 
                 if song_time - last_snap_time >= HUD_SNAPSHOT_INTERVAL_SEC:
                     cached_snap = emotion_engine.snapshot(
-                        wtol_ms=WTOL_MS, beta=BETA, gamma=GAMMA,
+                        wtol_ms=profile.wtol_ms, beta=BETA, gamma=GAMMA,
                     )
                     last_snap_time = song_time
             else:
@@ -326,13 +416,13 @@ class SummaryScreen:
         cx = SCREEN_WIDTH // 2
         self._retry_btn = Button(
             label="OTRA PARTIDA",
-            rect=pygame.Rect(cx - 260, SCREEN_HEIGHT - 120, 240, 58),
+            rect=pygame.Rect(cx - 250, SCREEN_HEIGHT - 86, 230, 50),
             primary=True,
             hot_key=pygame.K_RETURN,
         )
         self._menu_btn = Button(
             label="Menu principal",
-            rect=pygame.Rect(cx + 20, SCREEN_HEIGHT - 120, 240, 58),
+            rect=pygame.Rect(cx + 20, SCREEN_HEIGHT - 86, 230, 50),
             hot_key=pygame.K_ESCAPE,
         )
 
@@ -384,14 +474,12 @@ class SummaryScreen:
             time_sec=self._elapsed,
         )
 
-        header = self.fonts.title.render("Sesion", True, (230, 235, 250))
-        header2 = self.fonts.title.render("completada", True, self._dominant_accent())
-        y = 80
+        header = self.fonts.button.render("Sesion completada", True, (230, 235, 250))
+        y = 44
         self.screen.blit(header, (SCREEN_WIDTH // 2 - header.get_width() // 2, y))
-        self.screen.blit(header2, (SCREEN_WIDTH // 2 - header2.get_width() // 2, y + 70))
 
-        card_rect = pygame.Rect(0, 0, 720, 360)
-        card_rect.center = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40)
+        card_rect = pygame.Rect(0, 0, 720, 356)
+        card_rect.center = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 2)
         self._draw_stats_card(card_rect)
 
         draw_button(
@@ -431,8 +519,8 @@ class SummaryScreen:
 
         left = rect.x + 48
         right = rect.x + rect.width - 48
-        top = rect.y + 32
-        line_h = 34
+        top = rect.y + 24
+        line_h = 30
 
         def render_row(y: int, label: str, value: str, color: tuple[int, int, int]) -> None:
             lbl = self.fonts.body.render(label, True, (160, 170, 190))
@@ -457,7 +545,7 @@ class SummaryScreen:
         render_row(sep_y + 12 + line_h * 2, "GOOD", f"{self.stats.goods}", (155, 210, 255))
         render_row(sep_y + 12 + line_h * 3, "OK", f"{self.stats.oks}", (170, 170, 170))
 
-        y = sep_y + 12 + line_h * 4 + 14
+        y = sep_y + 12 + line_h * 4 + 8
         self._draw_state_breakdown(left, right, y)
 
     def _draw_state_breakdown(self, left: int, right: int, y: int) -> None:

@@ -20,14 +20,14 @@ from __future__ import annotations
 from domain.models import DDADecision, EmotionSnapshot, EmotionState
 from domain.ports import AudioAdapterPort, GameAdapterPort
 from settings import (
-    BOREDOM_ACCW_THRESHOLD,
-    BOREDOM_JITTER_EPSILON,
     COLOR_COLD,
     COLOR_FLOW,
     COLOR_WARM,
     DENSITY_BOREDOM,
     DENSITY_FLOW,
     DENSITY_FRUSTRATION,
+    DENSITY_MAX,
+    DENSITY_MIN,
     FAST_RECOVERY_HIT_STREAK,
     FRUSTRATION_ENTER_ACCW,
     FRUSTRATION_ENTER_PF,
@@ -37,6 +37,8 @@ from settings import (
     TEMPO_BOREDOM,
     TEMPO_FLOW,
     TEMPO_FRUSTRATION,
+    TEMPO_MAX,
+    TEMPO_MIN,
     TEMPO_STEP_LIMIT,
     TRANSITION_SCORE_DECAY,
     TRANSITION_SCORE_THRESHOLD,
@@ -69,17 +71,25 @@ class DDAController:
         self,
         engine: GameAdapterPort,
         audio: AudioAdapterPort,
+        tempo_offset: float = 0.0,
+        density_offset: float = 0.0,
+        boredom_accw_threshold: float = 0.86,
+        boredom_jitter_epsilon: float = 0.025,
     ) -> None:
         self._engine = engine
         self._audio = audio
+        self._tempo_offset = tempo_offset
+        self._density_offset = density_offset
+        self._boredom_accw_threshold = boredom_accw_threshold
+        self._boredom_jitter_epsilon = boredom_jitter_epsilon
 
         self.current_state: EmotionState = EmotionState.FLOW
         self._pending_state: EmotionState = EmotionState.FLOW
         self._transition_score: float = 0.0
         self._time_in_state: float = 0.0
 
-        self._current_tempo: float = TEMPO_FLOW
-        self._current_density: float = DENSITY_FLOW
+        self._current_tempo: float = _clamp_tempo(TEMPO_FLOW + self._tempo_offset)
+        self._current_density: float = _clamp_density(DENSITY_FLOW + self._density_offset)
 
     def reset(self) -> None:
         """Restore controller to its initial FLOW state for a new session."""
@@ -87,8 +97,9 @@ class DDAController:
         self._pending_state = EmotionState.FLOW
         self._transition_score = 0.0
         self._time_in_state = 0.0
-        self._current_tempo = TEMPO_FLOW
-        self._current_density = DENSITY_FLOW
+        self._current_tempo = _clamp_tempo(TEMPO_FLOW + self._tempo_offset)
+        self._current_density = _clamp_density(DENSITY_FLOW + self._density_offset)
+        self._apply(EmotionState.FLOW)
 
     def evaluate(self, snapshot: EmotionSnapshot, dt_since_last: float) -> DDADecision:
         self._time_in_state += dt_since_last
@@ -183,8 +194,8 @@ class DDAController:
                 return EmotionState.FRUSTRATION
 
         is_bored = (
-            snapshot.accw > BOREDOM_ACCW_THRESHOLD
-            and snapshot.jitter <= BOREDOM_JITTER_EPSILON
+            snapshot.accw > self._boredom_accw_threshold
+            and snapshot.jitter <= self._boredom_jitter_epsilon
         )
         if is_bored:
             return EmotionState.BOREDOM
@@ -196,12 +207,12 @@ class DDAController:
     def _apply(self, state: EmotionState) -> None:
         params = _STATE_PARAMS[state]
 
-        target_tempo = params["tempo"]
+        target_tempo = _clamp_tempo(params["tempo"] + self._tempo_offset)
         self._current_tempo = _step_toward(
             self._current_tempo, target_tempo, TEMPO_STEP_LIMIT,
         )
 
-        target_density = params["density"]
+        target_density = _clamp_density(params["density"] + self._density_offset)
         self._current_density = _step_toward(
             self._current_density, target_density, TEMPO_STEP_LIMIT,
         )
@@ -219,3 +230,11 @@ def _step_toward(current: float, target: float, max_step: float) -> float:
     if abs(diff) <= max_step:
         return target
     return current + max_step * (1.0 if diff > 0 else -1.0)
+
+
+def _clamp_tempo(value: float) -> float:
+    return max(TEMPO_MIN, min(TEMPO_MAX, value))
+
+
+def _clamp_density(value: float) -> float:
+    return max(DENSITY_MIN, min(DENSITY_MAX, value))
