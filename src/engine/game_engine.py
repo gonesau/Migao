@@ -123,8 +123,26 @@ class GameEngine:
 
         self._hit_wtol_sec: float = WTOL_MS / 1000.0
         self._miss_grace_sec: float = MISS_GRACE_SEC
+        self._spanish_labels: bool = False
+        self._auto_miss_enabled: bool = True
+        self._screen_shake_enabled: bool = True
 
     # -- one-time init (call after pygame.init()) -----------------------------
+
+    def set_spanish_labels(self, enabled: bool) -> None:
+        self._spanish_labels = enabled
+
+    def set_auto_miss_enabled(self, enabled: bool) -> None:
+        self._auto_miss_enabled = enabled
+
+    def set_screen_shake_enabled(self, enabled: bool) -> None:
+        self._screen_shake_enabled = enabled
+
+    def clear_visual_feedback(self) -> None:
+        """Clear transient HUD feedback, particles and screen shake."""
+        self._feedback = []
+        self._particles = []
+        self._shake_amp = 0.0
 
     def init_fonts(self) -> None:
         self._font_hud = pygame.font.SysFont("monospace", FONT_HUD)
@@ -148,6 +166,8 @@ class GameEngine:
         self.stats = SessionStats()
         self._hit_wtol_sec = WTOL_MS / 1000.0
         self._miss_grace_sec = MISS_GRACE_SEC
+        self._auto_miss_enabled = True
+        self._screen_shake_enabled = True
 
     def configure_session_timing(self, wtol_ms: float, miss_grace_sec: float) -> None:
         self._hit_wtol_sec = max(1e-6, wtol_ms / 1000.0)
@@ -155,7 +175,7 @@ class GameEngine:
 
     @property
     def shake_offset(self) -> tuple[int, int]:
-        if self._shake_amp <= 0.1:
+        if not self._screen_shake_enabled or self._shake_amp <= 0.1:
             return (0, 0)
         amp = self._shake_amp
         return (
@@ -178,6 +198,8 @@ class GameEngine:
 
     def tick(self, song_time: float) -> None:
         self.song_time = song_time
+        if not self._auto_miss_enabled:
+            return
         for lane in self.lanes:
             for note in lane.notes:
                 if note.is_hit or note.is_missed:
@@ -185,7 +207,11 @@ class GameEngine:
                 if song_time > note.t_ideal + self._miss_grace_sec:
                     note.is_missed = True
                     self._emit_miss(note.t_ideal)
-                    self._add_feedback("MISS", (220, 60, 60), note.lane_id)
+                    self._add_feedback(
+                        self._feedback_text("MISS"),
+                        (220, 60, 60),
+                        note.lane_id,
+                    )
 
     def process_input(self, events: list[Any], song_time: float) -> None:
         for evt in events:
@@ -223,14 +249,18 @@ class GameEngine:
         hit_y = int(h * HIT_Y_RATIO)
         lane_w = w // LANE_COUNT
 
-        surface.fill(_blend(COLOR_BG, self.theme_color, 0.10))
+        base = _blend(COLOR_BG, self.theme_color, 0.16)
+        if surface.get_flags() & pygame.SRCALPHA:
+            surface.fill((base[0], base[1], base[2], 138))
+        else:
+            surface.fill(base)
 
         for i, lane in enumerate(self.lanes):
             x = i * lane_w
 
             if i % 2 == 0:
                 alt_surf = pygame.Surface((lane_w, h), pygame.SRCALPHA)
-                alt_surf.fill((255, 255, 255, 8))
+                alt_surf.fill((170, 95, 255, 12))
                 surface.blit(alt_surf, (x, 0))
 
             for note in lane.notes:
@@ -265,9 +295,9 @@ class GameEngine:
                     )
                     self._draw_feedback(surface, fb, x, lane_w, hit_y, fade)
 
-            pygame.draw.line(surface, (35, 35, 55), (x, 0), (x, h), 1)
+            pygame.draw.line(surface, _blend(self.theme_color, (60, 45, 95), 0.55), (x, 0), (x, h), 1)
 
-        pygame.draw.line(surface, (35, 35, 55), (w - 1, 0), (w - 1, h), 1)
+        pygame.draw.line(surface, _blend(self.theme_color, (60, 45, 95), 0.55), (w - 1, 0), (w - 1, h), 1)
 
         self._draw_particles(surface)
 
@@ -285,12 +315,14 @@ class GameEngine:
         w = surface.get_width()
         panel_h = 58
 
-        panel = pygame.Surface((w, panel_h), pygame.SRCALPHA)
-        panel.fill((8, 10, 18, 198))
-        surface.blit(panel, (0, 0))
+        panel_rect = pygame.Rect(10, 8, w - 20, panel_h)
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        panel.fill((10, 14, 24, 165))
+        surface.blit(panel, panel_rect.topleft)
+        pygame.draw.rect(surface, (90, 105, 140), panel_rect, 1, border_radius=10)
 
         border_col = _blend(self.theme_color, (20, 24, 36), 0.45)
-        pygame.draw.line(surface, border_col, (0, panel_h), (w, panel_h), 2)
+        pygame.draw.line(surface, border_col, (12, panel_h + 8), (w - 12, panel_h + 8), 2)
 
         state_name = state.value.upper()
         state_color = {
@@ -300,9 +332,9 @@ class GameEngine:
         }.get(state.value, (190, 190, 190))
 
         state_surf = self._font_hud.render(f"Estado {state_name}", True, state_color)
-        surface.blit(state_surf, (14, 8))
+        surface.blit(state_surf, (22, 16))
 
-        bx, by, bw, bh = 220, 12, 200, 14
+        bx, by, bw, bh = 238, 18, 185, 12
         pygame.draw.rect(surface, (30, 35, 50), (bx, by, bw, bh), border_radius=4)
         fill_w = max(0, int(bw * _clamp(snapshot.accw, 0.0, 1.0)))
         if fill_w > 0:
@@ -315,7 +347,7 @@ class GameEngine:
         )
 
         acc_lbl = self._font_hud.render(f"Acc_w {snapshot.accw:.2f}", True, (170, 175, 195))
-        surface.blit(acc_lbl, (bx, by + bh + 3))
+        surface.blit(acc_lbl, (bx, by + bh + 2))
 
         jitter_ms = snapshot.jitter * 1000.0
         jit_col = (
@@ -324,15 +356,97 @@ class GameEngine:
             (220, 75, 75)
         )
         jit_surf = self._font_hud.render(f"Jitter {jitter_ms:5.1f} ms", True, jit_col)
-        surface.blit(jit_surf, (460, 8))
+        surface.blit(jit_surf, (454, 16))
 
         risk = snapshot.frustration_risk
         risk_col = (220, 80, 80) if risk > 0.5 else (110, 200, 120)
         risk_surf = self._font_hud.render(f"P(F) {risk:.2f}  miss {snapshot.miss_streak}", True, risk_col)
-        surface.blit(risk_surf, (460, 32))
+        surface.blit(risk_surf, (454, 34))
 
         hint = self._font_hud.render("ESC salir", True, (95, 100, 120))
-        surface.blit(hint, (w - hint.get_width() - 16, 18))
+        surface.blit(hint, (w - hint.get_width() - 24, 24))
+
+    def render_hud_tutorial(
+        self,
+        surface: pygame.Surface,
+        snapshot: EmotionSnapshot,
+        state: EmotionState,
+    ) -> None:
+        """HUD con etiquetas en español para el tutorial."""
+        if not self._font_hud:
+            return
+
+        from ui import tutorial_strings as ts
+
+        w = surface.get_width()
+        panel_h = 58
+
+        panel_rect = pygame.Rect(10, 8, w - 20, panel_h)
+        panel = pygame.Surface(panel_rect.size, pygame.SRCALPHA)
+        panel.fill((10, 14, 24, 165))
+        surface.blit(panel, panel_rect.topleft)
+        pygame.draw.rect(surface, (90, 105, 140), panel_rect, 1, border_radius=10)
+
+        border_col = _blend(self.theme_color, (20, 24, 36), 0.45)
+        pygame.draw.line(surface, border_col, (12, panel_h + 8), (w - 12, panel_h + 8), 2)
+
+        state_color = {
+            "flow": (40, 210, 165),
+            "frustration": (80, 145, 255),
+            "boredom": (255, 165, 45),
+        }.get(state.value, (190, 190, 190))
+
+        state_surf = self._font_hud.render(
+            f"{ts.HUD_STATE} {ts.state_label_es(state)}",
+            True,
+            state_color,
+        )
+        surface.blit(state_surf, (22, 16))
+
+        bx, by, bw, bh = 238, 18, 185, 12
+        pygame.draw.rect(surface, (30, 35, 50), (bx, by, bw, bh), border_radius=4)
+        fill_w = max(0, int(bw * _clamp(snapshot.accw, 0.0, 1.0)))
+        if fill_w > 0:
+            bar_col = _blend((210, 55, 55), (40, 200, 145), snapshot.accw)
+            pygame.draw.rect(
+                surface, bar_col, (bx, by, fill_w, bh), border_radius=4,
+            )
+        pygame.draw.rect(
+            surface, (70, 75, 95), (bx, by, bw, bh), 1, border_radius=4,
+        )
+
+        acc_lbl = self._font_hud.render(
+            f"{ts.HUD_PRECISION} {snapshot.accw:.2f}",
+            True,
+            (170, 175, 195),
+        )
+        surface.blit(acc_lbl, (bx, by + bh + 2))
+
+        jitter_ms = snapshot.jitter * 1000.0
+        jit_col = (
+            (55, 210, 120) if jitter_ms < 30 else
+            (255, 185, 45) if jitter_ms < 60 else
+            (220, 75, 75)
+        )
+        jit_surf = self._font_hud.render(
+            f"{ts.HUD_RHYTHM_VAR} {jitter_ms:5.1f} ms",
+            True,
+            jit_col,
+        )
+        surface.blit(jit_surf, (454, 16))
+
+        risk = snapshot.frustration_risk
+        risk_col = (220, 80, 80) if risk > 0.5 else (110, 200, 120)
+        risk_surf = self._font_hud.render(
+            f"{ts.HUD_FRUSTRATION_RISK} {risk:.2f}  "
+            f"{ts.HUD_MISS_STREAK} {snapshot.miss_streak}",
+            True,
+            risk_col,
+        )
+        surface.blit(risk_surf, (454, 34))
+
+        hint = self._font_hud.render(ts.HUD_ESC, True, (95, 100, 120))
+        surface.blit(hint, (w - hint.get_width() - 24, 24))
 
     # -- private helpers ------------------------------------------------------
 
@@ -358,17 +472,39 @@ class GameEngine:
         self._spawn_hit_particles(lane.lane_id, best_err)
 
         if best_err <= tol * 0.25:
-            self._add_feedback("PERFECT!", (255, 240, 80), lane.lane_id)
+            self._add_feedback(
+                self._feedback_text("PERFECT!"),
+                (255, 240, 80),
+                lane.lane_id,
+            )
             self.stats.perfects += 1
         elif best_err <= tol * 0.55:
-            self._add_feedback("GREAT", (80, 255, 165), lane.lane_id)
+            self._add_feedback(
+                self._feedback_text("GREAT"),
+                (80, 255, 165),
+                lane.lane_id,
+            )
             self.stats.greats += 1
         elif best_err <= tol:
-            self._add_feedback("GOOD", (155, 210, 255), lane.lane_id)
+            self._add_feedback(
+                self._feedback_text("GOOD"),
+                (155, 210, 255),
+                lane.lane_id,
+            )
             self.stats.goods += 1
         else:
-            self._add_feedback("OK", (170, 170, 170), lane.lane_id)
+            self._add_feedback(
+                self._feedback_text("OK"),
+                (170, 170, 170),
+                lane.lane_id,
+            )
             self.stats.oks += 1
+
+    def _feedback_text(self, key: str) -> str:
+        if not self._spanish_labels:
+            return key
+        from ui.tutorial_strings import hit_label_es
+        return hit_label_es(key)
 
     def _emit_hit(self, t_ideal: float, t_real: float) -> None:
         self._events.append(
@@ -380,7 +516,8 @@ class GameEngine:
             GameplayEvent(kind="miss", t_ideal=t_ideal, t_real=None),
         )
         self.stats.total_misses += 1
-        self._shake_amp = min(12.0, self._shake_amp + 6.5)
+        if self._screen_shake_enabled:
+            self._shake_amp = min(12.0, self._shake_amp + 6.5)
 
     def _add_feedback(
         self,

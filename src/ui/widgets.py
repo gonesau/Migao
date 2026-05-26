@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 import pygame
 
+from ui.theme import THEME
+
 
 def blend(c1: tuple[int, int, int], c2: tuple[int, int, int], t: float) -> tuple[int, int, int]:
     t = max(0.0, min(1.0, t))
@@ -65,6 +67,46 @@ def draw_animated_backdrop(
         surface.blit(glow, (cx - radius, cy - radius))
 
 
+def draw_neon_minimal_background(
+    surface: pygame.Surface,
+    time_sec: float,
+    overlay_alpha: int = THEME.overlay_alpha,
+) -> None:
+    """Draw abstract neon background with soft motion."""
+    w, h = surface.get_size()
+    draw_vertical_gradient(surface, THEME.base_bg_top, THEME.base_bg_bottom)
+    for i in range(3):
+        band_w = int(w * (0.16 + i * 0.03))
+        x = int((w * (0.14 + i * 0.28)) + math.sin(time_sec * (0.25 + i * 0.10)) * 18)
+        glow = pygame.Surface((band_w, h), pygame.SRCALPHA)
+        glow.fill((*THEME.lane_glow, 24 - i * 5))
+        surface.blit(glow, (x - band_w // 2, 0))
+    draw_soft_overlay(surface, overlay_alpha)
+
+
+def draw_soft_overlay(surface: pygame.Surface, alpha: int) -> None:
+    overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+    overlay.fill((6, 10, 18, max(0, min(255, alpha))))
+    surface.blit(overlay, (0, 0))
+
+
+def draw_glass_panel(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    alpha: int = THEME.panel_alpha,
+) -> None:
+    panel = pygame.Surface(rect.size, pygame.SRCALPHA)
+    panel.fill((14, 22, 36, alpha))
+    surface.blit(panel, rect.topleft)
+    pygame.draw.rect(
+        surface,
+        (110, 130, 170, THEME.panel_border_alpha),
+        rect,
+        1,
+        border_radius=14,
+    )
+
+
 @dataclass
 class Button:
     label: str
@@ -116,6 +158,24 @@ def draw_button(
             button.rect.centerx - label.get_width() // 2,
             button.rect.centery - label.get_height() // 2,
         ),
+    )
+
+
+def draw_animated_button(
+    surface: pygame.Surface,
+    button: Button,
+    font: pygame.font.Font,
+    accent: tuple[int, int, int],
+    hover: bool,
+    time_sec: float,
+) -> None:
+    draw_button(
+        surface=surface,
+        button=button,
+        font=font,
+        accent=accent,
+        hover=hover,
+        time_sec=time_sec,
     )
 
 

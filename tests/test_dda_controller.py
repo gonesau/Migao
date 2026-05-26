@@ -241,6 +241,29 @@ class TestExitBand:
         assert dda.current_state == EmotionState.FRUSTRATION
 
 
+class TestConfigurableHysteresis:
+    def test_lower_cooldown_accelerates_transition(self) -> None:
+        default = DDAController(
+            engine=_FakeGameAdapter(),
+            audio=_FakeAudioAdapter(),
+        )
+        fast = DDAController(
+            engine=_FakeGameAdapter(),
+            audio=_FakeAudioAdapter(),
+            hysteresis_cooldown_sec=1.0,
+            transition_score_threshold=1.0,
+        )
+        frustration_snap = _make_snapshot(accw=0.30, frustration_risk=0.9)
+
+        default.evaluate(frustration_snap, dt_since_last=7.0)
+        default.evaluate(frustration_snap, dt_since_last=5.0)
+        assert default.current_state == EmotionState.FRUSTRATION
+
+        fast.evaluate(frustration_snap, dt_since_last=1.5)
+        fast.evaluate(frustration_snap, dt_since_last=1.0)
+        assert fast.current_state == EmotionState.FRUSTRATION
+
+
 class TestStepToward:
     def test_small_step(self) -> None:
         result = _step_toward(1.0, 1.1, 0.05)

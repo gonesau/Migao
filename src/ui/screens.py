@@ -32,10 +32,13 @@ from settings import (
 from telemetry.emotion_engine import EmotionEngine
 from ui.widgets import (
     Button,
+    draw_animated_button,
     draw_animated_backdrop,
-    draw_button,
     draw_fade_overlay,
+    draw_glass_panel,
+    draw_neon_minimal_background,
 )
+from ui.theme import THEME
 
 SONG_DURATION_SEC = 90.0
 
@@ -46,6 +49,7 @@ class Intent(str, Enum):
     PLAY = "play"
     MENU = "menu"
     SUMMARY = "summary"
+    TUTORIAL = "tutorial"
 
 
 @dataclass
@@ -111,13 +115,17 @@ class MenuScreen:
         ]
         self._play_btn = Button(
             label="JUGAR",
-            rect=pygame.Rect(cx - 150, 382, 300, 58),
+            rect=pygame.Rect(cx - 150, 362, 300, 58),
             primary=True,
             hot_key=pygame.K_RETURN,
         )
+        self._tutorial_btn = Button(
+            label="Tutorial",
+            rect=pygame.Rect(cx - 150, 432, 300, 50),
+        )
         self._quit_btn = Button(
             label="Salir",
-            rect=pygame.Rect(cx - 90, 456, 180, 46),
+            rect=pygame.Rect(cx - 90, 498, 180, 46),
             hot_key=pygame.K_ESCAPE,
         )
 
@@ -157,6 +165,8 @@ class MenuScreen:
                             self._selected = diff
                     if self._play_btn.contains(evt.pos):
                         leaving = Intent.PLAY
+                    elif self._tutorial_btn.contains(evt.pos):
+                        leaving = Intent.TUTORIAL
                     elif self._quit_btn.contains(evt.pos):
                         leaving = Intent.QUIT
 
@@ -169,6 +179,8 @@ class MenuScreen:
                 if fade_out >= 1.0:
                     if leaving is Intent.QUIT:
                         return Intent.QUIT, None
+                    if leaving is Intent.TUTORIAL:
+                        return Intent.TUTORIAL, None
                     return Intent.PLAY, self._selected
                 continue
 
@@ -185,12 +197,8 @@ class MenuScreen:
         self._selected = order[(idx + delta) % len(order)]
 
     def _draw(self, mouse_pos: tuple[int, int]) -> None:
-        draw_animated_backdrop(
-            self.screen,
-            base_color=(30, 70, 120),
-            accent_color=COLOR_FLOW,
-            time_sec=self._elapsed,
-        )
+        draw_neon_minimal_background(self.screen, self._elapsed)
+        draw_glass_panel(self.screen, pygame.Rect(220, 90, 840, 510), alpha=118)
 
         title = self.fonts.title.render("MIGAO", True, (240, 245, 255))
         subtitle = self.fonts.subtitle.render(
@@ -209,7 +217,7 @@ class MenuScreen:
         self.screen.blit(niv, (SCREEN_WIDTH // 2 - niv.get_width() // 2, 278))
 
         for diff, btn in self._diff_specs:
-            draw_button(
+            draw_animated_button(
                 self.screen,
                 Button(
                     label=btn.label,
@@ -217,19 +225,25 @@ class MenuScreen:
                     primary=diff is self._selected,
                 ),
                 self.fonts.button,
-                accent=COLOR_FLOW,
+                accent=THEME.accent,
                 hover=btn.contains(mouse_pos),
                 time_sec=self._elapsed,
             )
 
         # Buttons
-        draw_button(
+        draw_animated_button(
             self.screen, self._play_btn, self.fonts.button,
-            accent=COLOR_FLOW,
+            accent=THEME.accent,
             hover=self._play_btn.contains(mouse_pos),
             time_sec=self._elapsed,
         )
-        draw_button(
+        draw_animated_button(
+            self.screen, self._tutorial_btn, self.fonts.button,
+            accent=(120, 200, 255),
+            hover=self._tutorial_btn.contains(mouse_pos),
+            time_sec=self._elapsed,
+        )
+        draw_animated_button(
             self.screen, self._quit_btn, self.fonts.button,
             accent=(170, 180, 200),
             hover=self._quit_btn.contains(mouse_pos),
@@ -272,7 +286,7 @@ class PlayingScreen:
         self.audio = audio
         self.difficulty = difficulty
 
-        self._scene = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        self._scene = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
 
     def run(self) -> tuple[Intent, SessionStats]:
         self.engine.reset_session()
@@ -379,12 +393,17 @@ class PlayingScreen:
         state: EmotionState,
         song_time: float,
     ) -> None:
-        self._scene.fill(COLOR_BG)
+        draw_animated_backdrop(
+            self._scene,
+            base_color=(28, 12, 48),
+            accent_color=(140, 70, 255),
+            time_sec=song_time,
+        )
         self.engine.render(self._scene)
         self.engine.render_hud(self._scene, snapshot, state)
 
         ox, oy = self.engine.shake_offset
-        self.screen.fill(COLOR_BG)
+        draw_neon_minimal_background(self.screen, song_time, overlay_alpha=82)
         self.screen.blit(self._scene, (ox, oy))
 
         remaining = max(0.0, SONG_DURATION_SEC - song_time)
@@ -467,12 +486,8 @@ class SummaryScreen:
                 return leaving
 
     def _draw(self, mouse_pos: tuple[int, int]) -> None:
-        draw_animated_backdrop(
-            self.screen,
-            base_color=(40, 50, 80),
-            accent_color=self._dominant_accent(),
-            time_sec=self._elapsed,
-        )
+        draw_neon_minimal_background(self.screen, self._elapsed)
+        draw_glass_panel(self.screen, pygame.Rect(220, 30, 840, 640), alpha=112)
 
         header = self.fonts.button.render("Sesion completada", True, (230, 235, 250))
         y = 44
@@ -482,13 +497,13 @@ class SummaryScreen:
         card_rect.center = (SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 2)
         self._draw_stats_card(card_rect)
 
-        draw_button(
+        draw_animated_button(
             self.screen, self._retry_btn, self.fonts.button,
-            accent=COLOR_FLOW,
+            accent=THEME.accent,
             hover=self._retry_btn.contains(mouse_pos),
             time_sec=self._elapsed,
         )
-        draw_button(
+        draw_animated_button(
             self.screen, self._menu_btn, self.fonts.button,
             accent=(170, 180, 200),
             hover=self._menu_btn.contains(mouse_pos),

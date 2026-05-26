@@ -36,6 +36,18 @@ uv run python src/main.py
 | Enter / Espacio | Jugar (en menu) / reintentar (en resumen)    |
 | ESC           | Volver a menu / salir                          |
 
+## Tutorial
+
+Desde el menu principal, elige **Tutorial** para una demo interactiva guiada (textos en español):
+
+- Explica las teclas `D`, `F`, `J` y `K` y el momento de pulsarlas.
+- Pausa la accion en puntos clave para que practiques cada carril.
+- Muestra las calificaciones de acierto (Perfecto, Genial, Bien, Aceptable, Fallo).
+- Demuestra como el juego adapta tempo, densidad de notas y ambiente segun tu rendimiento real.
+- Si fallas un paso, el tutorial continua y muestra como reacciona la adaptacion.
+
+Al finalizar puedes ir directo a una partida o volver al menu.
+
 ## Estructura del proyecto
 
 ```
@@ -57,6 +69,8 @@ src/
     audio_manager.py       # SFX y bucle procedural generado con numpy
   ui/
     screens.py             # MenuScreen, PlayingScreen, SummaryScreen
+    tutorial_screen.py     # Tutorial interactivo con demo pausable
+    tutorial_strings.py    # Textos en español del tutorial
     widgets.py             # Botones, gradientes y helpers visuales
 tests/
   test_emotion_engine.py   # Tests unitarios de telemetria
@@ -107,3 +121,11 @@ Los parametros clave se encuentran en `src/settings.py`:
 ```bash
 uv run pytest
 ```
+
+Para ejecutar tests y generar un resumen HTML:
+
+```bash
+uv run python scripts/run_tests_and_report.py
+```
+
+El reporte se genera en `reports/test_summary.html`.

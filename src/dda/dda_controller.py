@@ -75,6 +75,10 @@ class DDAController:
         density_offset: float = 0.0,
         boredom_accw_threshold: float = 0.86,
         boredom_jitter_epsilon: float = 0.025,
+        hysteresis_cooldown_sec: float | None = None,
+        transition_score_threshold: float | None = None,
+        transition_score_decay: float | None = None,
+        fast_recovery_hit_streak: int | None = None,
     ) -> None:
         self._engine = engine
         self._audio = audio
@@ -82,6 +86,26 @@ class DDAController:
         self._density_offset = density_offset
         self._boredom_accw_threshold = boredom_accw_threshold
         self._boredom_jitter_epsilon = boredom_jitter_epsilon
+        self._hysteresis_cooldown_sec = (
+            HYSTERESIS_COOLDOWN_SEC
+            if hysteresis_cooldown_sec is None
+            else hysteresis_cooldown_sec
+        )
+        self._transition_score_threshold = (
+            TRANSITION_SCORE_THRESHOLD
+            if transition_score_threshold is None
+            else transition_score_threshold
+        )
+        self._transition_score_decay = (
+            TRANSITION_SCORE_DECAY
+            if transition_score_decay is None
+            else transition_score_decay
+        )
+        self._fast_recovery_hit_streak = (
+            FAST_RECOVERY_HIT_STREAK
+            if fast_recovery_hit_streak is None
+            else fast_recovery_hit_streak
+        )
 
         self.current_state: EmotionState = EmotionState.FLOW
         self._pending_state: EmotionState = EmotionState.FLOW
@@ -135,15 +159,16 @@ class DDAController:
             self._transition_score += 1.0
         else:
             self._transition_score = max(
-                0.0, self._transition_score - TRANSITION_SCORE_DECAY,
+                0.0,
+                self._transition_score - self._transition_score_decay,
             )
 
     def _can_commit_transition(self) -> bool:
         if self._pending_state == self.current_state:
             return False
-        if self._time_in_state < HYSTERESIS_COOLDOWN_SEC:
+        if self._time_in_state < self._hysteresis_cooldown_sec:
             return False
-        return self._transition_score >= TRANSITION_SCORE_THRESHOLD
+        return self._transition_score >= self._transition_score_threshold
 
     def _commit_transition(
         self,
@@ -169,9 +194,9 @@ class DDAController:
         # adaptation parameters still get a chance to settle audibly.
         return (
             self.current_state == EmotionState.FRUSTRATION
-            and self._time_in_state >= HYSTERESIS_COOLDOWN_SEC
+            and self._time_in_state >= self._hysteresis_cooldown_sec
             and snapshot.miss_streak == 0
-            and snapshot.hit_streak >= FAST_RECOVERY_HIT_STREAK
+            and snapshot.hit_streak >= self._fast_recovery_hit_streak
         )
 
     # -- classification -------------------------------------------------------

@@ -17,6 +17,7 @@ from ui.screens import (
     SummaryScreen,
     build_fonts,
 )
+from ui.tutorial_screen import TutorialScreen
 
 
 def run() -> None:
@@ -43,6 +44,10 @@ def run() -> None:
             ).run()
             if diff is not None:
                 selected_difficulty = diff
+        elif intent == Intent.TUTORIAL:
+            intent = TutorialScreen(
+                screen, clock, fonts, engine, audio,
+            ).run()
         elif intent == Intent.PLAY:
             intent, last_stats = PlayingScreen(
                 screen, clock, fonts, engine, audio, selected_difficulty,
